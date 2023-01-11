@@ -5,9 +5,9 @@ import (
 	"github.com/alist-org/alist/v3/internal/conf"
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/internal/op"
+	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -18,7 +18,7 @@ func initSettings() {
 	// check deprecated
 	settings, err := op.GetSettingItems()
 	if err != nil {
-		log.Fatalf("failed get settings: %+v", err)
+		utils.Log.Fatalf("failed get settings: %+v", err)
 	}
 
 	for i := range settings {
@@ -26,7 +26,7 @@ func initSettings() {
 			settings[i].Flag = model.DEPRECATED
 			err = op.SaveSettingItem(&settings[i])
 			if err != nil {
-				log.Fatalf("failed save setting: %+v", err)
+				utils.Log.Fatalf("failed save setting: %+v", err)
 			}
 		}
 	}
@@ -37,24 +37,25 @@ func initSettings() {
 		// err
 		stored, err := op.GetSettingItemByKey(item.Key)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Fatalf("failed get setting: %+v", err)
+			utils.Log.Fatalf("failed get setting: %+v", err)
 			continue
 		}
-
 		// save
-		if stored != nil {
+		if stored != nil && item.Key != conf.VERSION {
 			item.Value = stored.Value
 		}
 		if stored == nil || *item != *stored {
 			err = op.SaveSettingItem(item)
 			if err != nil {
-				log.Fatalf("failed save setting: %+v", err)
+				utils.Log.Fatalf("failed save setting: %+v", err)
 			}
-			continue
+		} else {
+			// Not save so needs to execute hook
+			_, err = op.HandleSettingItemHook(item)
+			if err != nil {
+				utils.Log.Errorf("failed to execute hook on %s: %+v", item.Key, err)
+			}
 		}
-
-		// Not save so needs to execute hook
-		op.HandleSettingItemHook(item)
 	}
 }
 
@@ -142,7 +143,8 @@ func InitialSettings() []model.SettingItem {
 
 		// single settings
 		{Key: conf.Token, Value: token, Type: conf.TypeString, Group: model.SINGLE, Flag: model.PRIVATE},
-		{Key: conf.SearchIndex, Value: "none", Type: conf.TypeSelect, Options: "database,bleve,none", Group: model.INDEX},
+		{Key: conf.SearchIndex, Value: "none", Type: conf.TypeSelect, Options: "database,database_non_full_text,bleve,none", Group: model.INDEX},
+		{Key: conf.AutoUpdateIndex, Value: "false", Type: conf.TypeBool, Group: model.INDEX},
 		{Key: conf.IgnorePaths, Value: "", Type: conf.TypeText, Group: model.INDEX, Flag: model.PRIVATE, Help: `one path per line`},
 		{Key: conf.IndexProgress, Value: "{}", Type: conf.TypeText, Group: model.SINGLE, Flag: model.PRIVATE},
 

@@ -1,4 +1,4 @@
-package baidu_netdisk
+package terbox
 
 import (
 	"bytes"
@@ -6,43 +6,44 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"github.com/alist-org/alist/v3/drivers/base"
+	"github.com/alist-org/alist/v3/pkg/utils"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	stdpath "path"
 	"strconv"
 	"strings"
 
-	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
-	"github.com/alist-org/alist/v3/pkg/utils"
-	log "github.com/sirupsen/logrus"
 )
 
-type BaiduNetdisk struct {
+type Terabox struct {
 	model.Storage
 	Addition
-	AccessToken string
 }
 
-func (d *BaiduNetdisk) Config() driver.Config {
+func (d *Terabox) Config() driver.Config {
 	return config
 }
 
-func (d *BaiduNetdisk) GetAddition() driver.Additional {
+func (d *Terabox) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
-func (d *BaiduNetdisk) Init(ctx context.Context) error {
-	return d.refreshToken()
+func (d *Terabox) Init(ctx context.Context) error {
+	_, err := d.request("https://www.terabox.com/api/check/login", http.MethodGet, nil, nil)
+	return err
 }
 
-func (d *BaiduNetdisk) Drop(ctx context.Context) error {
+func (d *Terabox) Drop(ctx context.Context) error {
 	return nil
 }
 
-func (d *BaiduNetdisk) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+func (d *Terabox) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	files, err := d.getFiles(dir.GetPath())
 	if err != nil {
 		return nil, err
@@ -52,19 +53,19 @@ func (d *BaiduNetdisk) List(ctx context.Context, dir model.Obj, args model.ListA
 	})
 }
 
-func (d *BaiduNetdisk) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+func (d *Terabox) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if d.DownloadAPI == "crack" {
 		return d.linkCrack(file, args)
 	}
 	return d.linkOfficial(file, args)
 }
 
-func (d *BaiduNetdisk) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
+func (d *Terabox) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
 	_, err := d.create(stdpath.Join(parentDir.GetPath(), dirName), 0, 1, "", "")
 	return err
 }
 
-func (d *BaiduNetdisk) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
+func (d *Terabox) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	data := []base.Json{
 		{
 			"path":    srcObj.GetPath(),
@@ -76,7 +77,7 @@ func (d *BaiduNetdisk) Move(ctx context.Context, srcObj, dstDir model.Obj) error
 	return err
 }
 
-func (d *BaiduNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
+func (d *Terabox) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
 	data := []base.Json{
 		{
 			"path":    srcObj.GetPath(),
@@ -87,7 +88,7 @@ func (d *BaiduNetdisk) Rename(ctx context.Context, srcObj model.Obj, newName str
 	return err
 }
 
-func (d *BaiduNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
+func (d *Terabox) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	data := []base.Json{
 		{
 			"path":    srcObj.GetPath(),
@@ -99,13 +100,13 @@ func (d *BaiduNetdisk) Copy(ctx context.Context, srcObj, dstDir model.Obj) error
 	return err
 }
 
-func (d *BaiduNetdisk) Remove(ctx context.Context, obj model.Obj) error {
+func (d *Terabox) Remove(ctx context.Context, obj model.Obj) error {
 	data := []string{obj.GetPath()}
 	_, err := d.manage("delete", data)
 	return err
 }
 
-func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+func (d *Terabox) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
 	tempFile, err := utils.CreateTempFile(stream.GetReadCloser())
 	if err != nil {
 		return err
@@ -117,13 +118,10 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 	var Default int64 = 4 * 1024 * 1024
 	defaultByteData := make([]byte, Default)
 	count := int(math.Ceil(float64(stream.GetSize()) / float64(Default)))
-	var SliceSize int64 = 256 * 1024
 	// cal md5
 	h1 := md5.New()
 	h2 := md5.New()
 	block_list := make([]string, 0)
-	content_md5 := ""
-	slice_md5 := ""
 	left := stream.GetSize()
 	for i := 0; i < count; i++ {
 		byteSize := Default
@@ -144,38 +142,21 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		block_list = append(block_list, fmt.Sprintf("\"%s\"", hex.EncodeToString(h2.Sum(nil))))
 		h2.Reset()
 	}
-	content_md5 = hex.EncodeToString(h1.Sum(nil))
+
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
 		return err
 	}
-	if stream.GetSize() <= SliceSize {
-		slice_md5 = content_md5
-	} else {
-		sliceData := make([]byte, SliceSize)
-		_, err = io.ReadFull(tempFile, sliceData)
-		if err != nil {
-			return err
-		}
-		h2.Write(sliceData)
-		slice_md5 = hex.EncodeToString(h2.Sum(nil))
-		_, err = tempFile.Seek(0, io.SeekStart)
-		if err != nil {
-			return err
-		}
-	}
+
 	rawPath := stdpath.Join(dstDir.GetPath(), stream.GetName())
 	path := encodeURIComponent(rawPath)
 	block_list_str := fmt.Sprintf("[%s]", strings.Join(block_list, ","))
-	data := fmt.Sprintf("path=%s&size=%d&isdir=0&autoinit=1&block_list=%s&content-md5=%s&slice-md5=%s",
+	data := fmt.Sprintf("path=%s&size=%d&isdir=0&autoinit=1&block_list=%s",
 		path, stream.GetSize(),
-		block_list_str,
-		content_md5, slice_md5)
-	params := map[string]string{
-		"method": "precreate",
-	}
+		block_list_str)
+	params := map[string]string{}
 	var precreateResp PrecreateResp
-	_, err = d.post("/xpan/file", params, data, &precreateResp)
+	_, err = d.post("/api/precreate", params, data, &precreateResp)
 	if err != nil {
 		return err
 	}
@@ -184,11 +165,13 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		return nil
 	}
 	params = map[string]string{
-		"method":       "upload",
-		"access_token": d.AccessToken,
-		"type":         "tmpfile",
-		"path":         path,
-		"uploadid":     precreateResp.Uploadid,
+		"method":     "upload",
+		"path":       path,
+		"uploadid":   precreateResp.Uploadid,
+		"app_id":     "250528",
+		"web":        "1",
+		"channel":    "dubox",
+		"clienttype": "0",
 	}
 	left = stream.GetSize()
 	for i, partseq := range precreateResp.BlockList {
@@ -208,12 +191,13 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 		if err != nil {
 			return err
 		}
-		u := "https://d.pcs.baidu.com/rest/2.0/pcs/superfile2"
+		u := "https://c-jp.terabox.com/rest/2.0/pcs/superfile2"
 		params["partseq"] = strconv.Itoa(partseq)
 		res, err := base.RestyClient.R().
 			SetContext(ctx).
 			SetQueryParams(params).
 			SetFileReader("file", stream.GetName(), bytes.NewReader(byteData)).
+			SetHeader("Cookie", d.Cookie).
 			Post(u)
 		if err != nil {
 			return err
@@ -227,4 +211,4 @@ func (d *BaiduNetdisk) Put(ctx context.Context, dstDir model.Obj, stream model.F
 	return err
 }
 
-var _ driver.Driver = (*BaiduNetdisk)(nil)
+var _ driver.Driver = (*Terabox)(nil)

@@ -45,7 +45,6 @@ func (d *USS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	prefix := getKey(dir.GetPath(), true)
 	objsChan := make(chan *upyun.FileInfo, 10)
 	var err error
-	defer close(objsChan)
 	go func() {
 		err = d.client.List(&upyun.GetObjectsConfig{
 			Path:           prefix,
@@ -73,11 +72,8 @@ func (d *USS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 
 func (d *USS) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	key := getKey(file.GetPath(), false)
-	host := d.CustomHost
-	if host == "" {
-		host = d.Endpoint
-	}
-	if strings.Contains(host, "://") {
+	host := d.Endpoint
+	if !strings.Contains(host, "://") { //判断是否包含协议头，否则https
 		host = "https://" + host
 	}
 	u := fmt.Sprintf("%s/%s", host, key)
